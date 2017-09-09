@@ -181,10 +181,17 @@ class FullyConnectedNet(object):
         # parameters should be initialized to zero.                                #
         ############################################################################
         layer_dims = [input_dim] + hidden_dims + [num_classes]
-        for i, (in_shape, out_shape) in enumerate(zip(layer_dims[:-1], 
-                                                      layer_dims[1:])):
-            self.params["W{}".format(i+1)] = weight_scale*np.random.randn(in_shape, out_shape)
-            self.params["b{}".format(i+1)] = np.zeros(out_shape)
+        for i, (in_shape, out_shape) in enumerate(zip(layer_dims[:-2], 
+                                                      layer_dims[1:-1]), 1):
+            self.params["W{}".format(i)] = weight_scale*np.random.randn(in_shape, out_shape)
+            self.params["b{}".format(i)] = np.zeros(out_shape)
+            if self.use_batchnorm:
+                self.params["gamma{}".format(i)] = np.ones(out_shape)
+                self.params["beta{}".format(i)] = np.zeros(out_shape)
+        in_shape = layer_dims[-2]
+        out_shape = layer_dims[-1]
+        self.params["W{}".format(i+1)] = weight_scale*np.random.randn(in_shape, out_shape)
+        self.params["b{}".format(i+1)] = np.zeros(out_shape)
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -246,22 +253,36 @@ class FullyConnectedNet(object):
         caches = {}
         weight_names = []
         bias_names = []
-        for i in range(self.num_layers):
+        for i in range(self.num_layers-1):
             weight_name = "W{}".format(i+1)
             bias_name = "b{}".format(i+1)
             w = self.params[weight_name]
             b = self.params[bias_name]
             scores, cache = affine_forward(input_value, w, b)
             caches["affine_{}".format(weight_name)] = cache
+            if self.use_batchnorm:
+                bn_param= self.bn_params[i]
+                gamma = self.params["gamma{}".format(i+1)]
+                beta = self.params["beta{}".format(i+1)]
+                scores, cache = batchnorm_forward(scores, gamma, beta, bn_param)
+                caches["bn_{}".format(weight_name)] = cache
             out_value, cache = relu_forward(scores)
             caches["relu_{}".format(weight_name)] = cache
             weight_names.append(weight_name)
             bias_names.append(bias_name)
             input_value = out_value
+        # output layer
+        weight_name = "W{}".format(self.num_layers)
+        bias_name = "b{}".format(self.num_layers)
+        w = self.params[weight_name]
+        b = self.params[bias_name]
+        scores, cache = affine_forward(input_value, w, b)
+        caches["affine_{}".format(weight_name)] = cache
+        weight_names.append(weight_name)
+        bias_names.append(bias_name)
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
-
         # If test mode return early
         if mode == 'test':
             return scores
@@ -294,6 +315,11 @@ class FullyConnectedNet(object):
         for weight_name, bias_name in zip(weight_names[::-1], bias_names[::-1]):
             cache = caches["relu_{}".format(weight_name)]
             dldz = relu_backward(dlds, cache)
+            if self.use_batchnorm:
+                cache = caches["bn_{}".format(weight_name)]
+                dldz, dgamma, dbeta = batchnorm_backward_alt(dldz, cache)
+                grads["gamma{}".format(weight_name[-1])] = dgamma
+                grads["beta{}".format(weight_name[-1])] = dbeta
             cache = caches["affine_{}".format(weight_name)]
             dlds, dw, db = affine_backward(dldz, cache)
             grads[weight_name] = dw + self.reg*self.params[weight_name]

@@ -171,38 +171,22 @@ def batchnorm_forward(x, gamma, beta, bn_param):
         # variance, storing your result in the running_mean and running_var   #
         # variables.                                                          #
         #######################################################################
-        ##1: mu
-        mu = x.mean(axis=0)
-
-        ##2: xmmu_sq
-        xmmu = x - mu
-
-        ##3: xmmu_sq
-        xmmu_sq = xmmu**2
-
-        ##4: vsq
-        vsq = xmmu_sq.mean(axis=0)
-
-        ##5: v
-        v = np.sqrt(vsq + eps)
-
-        ##6: invv 
-        invv = 1.0/v
-
-        ##7: xnorm
-        xnorm = xmmu*invv
-
-        ##8: scale
-        scale = gamma*xnorm
-
-        ##9: out
-        out = scale + beta
+        #1: mean
+        m = x.mean(axis=0)
+        #2: std
+        v = x.std(axis=0)
+        #3: demean
+        a = x - m
+        #4: normalize
+        b = a/(v+eps)
+        #5: scale and shift
+        out = gamma*b + beta
         
         # updatea running statistics
-        running_mean = momentum*running_mean + (1-momentum)*mu
+        running_mean = momentum*running_mean + (1-momentum)*m
         running_var = momentum*running_var + (1-momentum)*v
         # cache
-        cache = (x, mu, xmmu, xmmu_sq, vsq, v, invv, xnorm, scale, gamma, beta)
+        cache = (x, a, b, m, v, gamma, beta, eps)
         #######################################################################
         #                           END OF YOUR CODE                          #
         #######################################################################
@@ -238,7 +222,7 @@ def batchnorm_backward(dout, cache):
     intermediate nodes.
 
     Inputs:
-    - Dout: Upstream derivatives, of shape (N, D)
+    - dout: Upstream derivatives, of shape (N, D)
     - cache: Variable of intermediates from batchnorm_forward.
 
     Returns a tuple of:
@@ -252,39 +236,29 @@ def batchnorm_backward(dout, cache):
     # TODO: Implement the backward pass for batch normalization. Store the    #
     # results in the dx, dgamma, and dbeta variables.                         #
     ###########################################################################
-    x, mu, xmmu, xmmu_sq, vsq, v, invv, xnorm, scale, gamma, beta = cache
-    
+    x, a, b, m, v, gamma, beta, eps = cache
     # compute dgama, dbeta, dx
-    # Backprop Step 9
-    dscale = dout
-    dbeta = np.sum(dout, axis=0)
-
-    # Backprop step 8
-    dxnorm = gamma*dscale
-    dgamma = (xnorm*dscale).sum(axis=0)
-
-    # Backprop step 7
-    dxmmu = invv * dxnorm
-    dinvv = (xmmu*dxnorm).sum(axis=0)
-
-    # Backprop step 6
-    dv = -1./vsq*dinvv
-
-    # Backprop step 5
-    dvsq = dv/(2*v)
-
-    # Backprop step 4
-    dxmmu_sq = np.ones((N, D))/N*dvsq
-
-    # Backprop step 3
-    dxmmu += 2*xmmu*dxmmu_sq
-
-    # Backprop step 2
-    dmu = -dxmmu.sum(axis=0)
-
-    # Basckprop step 1
-    dx = dxmmu
-    dx += np.ones((N, D))/N * dmu
+    ## 5
+    dgamma = (dout*b).sum(axis=0)
+    dbeta = dout.sum(axis=0)
+    dydb = np.ones((N,D))+gamma
+    doutdb = dout*dydb
+    ## 4
+    dbda = np.zeros((N, D))+1.0/(v+eps)
+    dbdv = -a/(v+eps)**2
+    doutda = doutdb*dbda
+    doutdv = doutdb*dbdv
+    ## 3
+    dadx = np.ones((N, D))
+    dadm = -np.ones((N, D))
+    ## 2
+    dvdx = (x-m)/(N*v)
+    dvdm = (m-x)/(N*v)
+    doutdm = doutda*dadm + doutdv*dvdm
+    ## 1
+    dmdx = np.ones(x.shape)/N
+    # final
+    dx = doutdv*dvdx+doutdm*dmdx+doutda*dadx
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -313,15 +287,16 @@ def batchnorm_backward_alt(dout, cache):
     # should be able to compute gradients with respect to the inputs in a     #
     # single statement; our implementation fits on a single 80-character line.#
     ###########################################################################
+    x, a, b, m, v, gamma, beta, eps = cache
     N, D = dout.shape
-    x, mu, xmmu, xmmu_sq, vsq, v, invv, xnorm, scale, gamma, beta = cache
     
-    dgamma = (dout*xnorm).sum(axis=0)
+    dgamma = (dout*b).sum(axis=0)
     dbeta = dout.sum(axis=0)
-    dx = (1./N)*gamma*(v**2)**(-1./2.)*(N*dout-dout.sum(axis=0)-(x-mu)*(v**2)**(-1.0)*(dout*(x-mu)).sum(axis=0))
+    dx = (1./N)*gamma*(v**2+eps)**(-1./2.)*(N*dout-np.sum(dout,axis=0)-(x-m)*(v**2+eps)**(-1.0)*np.sum(dout*(x-m),axis=0))
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
+
     return dx, dgamma, dbeta
 
 
